@@ -1,18 +1,21 @@
+import os
+import sys
 import fitz
 import pytesseract
 
 from pdf2image import convert_from_path
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# Tell Python where Tesseract is
-pytesseract.pytesseract.tesseract_cmd = (
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-)
+# Tell Python where Tesseract is if running on Windows and path exists
+if sys.platform == "win32":
+    win_tesseract = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    if os.path.exists(win_tesseract):
+        pytesseract.pytesseract.tesseract_cmd = win_tesseract
 
-# Path to Poppler
-POPPLER_PATH = (
-    r"C:\Users\vshet\Downloads\Release-26.02.0-0\poppler-26.02.0\Library\bin"
-)
+    win_poppler = r"C:\Users\vshet\Downloads\Release-26.02.0-0\poppler-26.02.0\Library\bin"
+    POPPLER_PATH = win_poppler if os.path.exists(win_poppler) else None
+else:
+    POPPLER_PATH = None
 
 
 def extract_text(pdf_path):
@@ -32,20 +35,21 @@ def extract_text(pdf_path):
 
     print("No embedded text found. Running OCR...")
 
-    images = convert_from_path(
-        pdf_path,
-        poppler_path=POPPLER_PATH
-    )
+    try:
+        convert_kwargs = {}
+        if POPPLER_PATH:
+            convert_kwargs["poppler_path"] = POPPLER_PATH
 
-    ocr_text = ""
+        images = convert_from_path(pdf_path, **convert_kwargs)
 
-    for image in images:
-        ocr_text += pytesseract.image_to_string(
-    image,
-    lang="eng"
-)
+        ocr_text = ""
+        for image in images:
+            ocr_text += pytesseract.image_to_string(image, lang="eng")
 
-    return ocr_text
+        return ocr_text
+    except Exception as e:
+        print(f"[Warning] OCR extraction skipped: {e}")
+        return ""
 
 
 def split_text(text):
