@@ -1,0 +1,49 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+
+# Python & Caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+.pytest_cache/
+
+# Environment Variables & Secrets (CRITICAL)
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Local SQLite Database & ChromaDB Vector Store
+*.db
+*.sqlite
+*.sqlite3
+backend/knowledge_assistant.db
+backend/chroma_db/
+chroma_db/
+
+# Uploaded Files (preserve directory structure via .gitkeep)
+backend/uploads/*
+!backend/uploads/.gitkeep
+uploads/*
+!uploads/.gitkeep
+
+# Node.js & Frontend Build Artifacts
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+build/
+.npm/
+
+# IDE & OS Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
