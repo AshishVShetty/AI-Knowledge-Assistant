@@ -1,10 +1,36 @@
 from pathlib import Path
-from sentence_transformers import SentenceTransformer
-import chromadb
 import uuid
+import chromadb
 
-# Load embedding model
-model = SentenceTransformer("all-MiniLM-L6-v2")
+# Global lazy-loaded embedding model to minimize RAM on server startup
+_model = None
+
+
+def get_embedding_model():
+    """
+    Lazy-load SentenceTransformer only when first needed.
+    Keeps startup RSS memory low (<100MB) so cloud services
+    (like Render 512MB free tier) bind the port and pass health checks instantly.
+    """
+    global _model
+    if _model is None:
+        try:
+            import torch
+            torch.set_num_threads(1)
+        except Exception:
+            pass
+        from sentence_transformers import SentenceTransformer
+        _model = SentenceTransformer("all-MiniLM-L6-v2")
+    return _model
+
+
+class _LazyModelProxy:
+    """Proxy object so legacy model.encode(...) calls continue to work seamlessly."""
+    def encode(self, *args, **kwargs):
+        return get_embedding_model().encode(*args, **kwargs)
+
+
+model = _LazyModelProxy()
 
 # Create persistent ChromaDB client using absolute path inside backend
 BASE_DIR = Path(__file__).resolve().parent.parent

@@ -1,10 +1,31 @@
-from sentence_transformers import CrossEncoder
+# Global lazy-loaded CrossEncoder model
+_reranker = None
 
 
-# Load the CrossEncoder model only once
-reranker = CrossEncoder(
-    "cross-encoder/ms-marco-MiniLM-L-6-v2"
-)
+def get_reranker():
+    """
+    Lazy-load CrossEncoder only when reranking is executed.
+    This saves ~150MB of RAM during startup and ensures Render free tier
+    does not hit OOM before opening its HTTP port.
+    """
+    global _reranker
+    if _reranker is None:
+        try:
+            import torch
+            torch.set_num_threads(1)
+        except Exception:
+            pass
+        from sentence_transformers import CrossEncoder
+        _reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    return _reranker
+
+
+class _LazyRerankerProxy:
+    def predict(self, *args, **kwargs):
+        return get_reranker().predict(*args, **kwargs)
+
+
+reranker = _LazyRerankerProxy()
 
 
 def rerank(
@@ -29,58 +50,37 @@ def rerank(
     if not chunks:
         return []
 
-    # --------------------------------------------------
-    # Create question-chunk pairs
-    # --------------------------------------------------
+    try:
+        # Create question-chunk pairs
+        pairs = [
+            (question, chunk["text"])
+            for chunk in chunks
+        ]
 
-    pairs = [
-        (question, chunk["text"])
-        for chunk in chunks
-    ]
+        # Predict CrossEncoder relevance scores
+        scores = reranker.predict(pairs)
 
-    # --------------------------------------------------
-    # Predict CrossEncoder relevance scores
-    # --------------------------------------------------
+        ranked_chunks = []
+        for chunk, score in zip(chunks, scores):
+            chunk_with_score = chunk.copy()
+            chunk_with_score["score"] = float(score)
+            ranked_chunks.append(chunk_with_score)
 
-    scores = reranker.predict(pairs)
-
-    # --------------------------------------------------
-    # Attach scores to chunk dictionaries
-    # --------------------------------------------------
-
-    ranked_chunks = []
-
-    for chunk, score in zip(chunks, scores):
-
-        chunk_with_score = chunk.copy()
-
-        chunk_with_score["score"] = float(score)
-
-        ranked_chunks.append(
-            chunk_with_score
+        # Sort by highest relevance score
+        ranked_chunks.sort(
+            key=lambda x: x["score"],
+            reverse=True
         )
 
-    # --------------------------------------------------
-    # Sort by highest relevance score
-    # --------------------------------------------------
+        # Remove weakly relevant chunks
+        filtered_chunks = [
+            chunk
+            for chunk in ranked_chunks
+            if chunk["score"] >= min_score
+        ]
 
-    ranked_chunks.sort(
-        key=lambda x: x["score"],
-        reverse=True
-    )
-
-    # --------------------------------------------------
-    # Remove weakly relevant chunks
-    # --------------------------------------------------
-
-    filtered_chunks = [
-        chunk
-        for chunk in ranked_chunks
-        if chunk["score"] >= min_score
-    ]
-
-    # --------------------------------------------------
-    # Return only the best remaining chunks
-    # --------------------------------------------------
-
-    return filtered_chunks[:top_k]
+        # Return only the best remaining chunks
+        return filtered_chunks[:top_k] if filtered_chunks else ranked_chunks[:top_k]
+    except Exception as e:
+        print(f"[Warning] CrossEncoder reranking skipped or low-memory ({e}). Falling back to hybrid retrieval order.")
+        return chunks[:top_k]
