@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
 
 export const getToken = () => localStorage.getItem('knowledge_assistant_token');
 export const setToken = (token) => localStorage.setItem('knowledge_assistant_token', token);
