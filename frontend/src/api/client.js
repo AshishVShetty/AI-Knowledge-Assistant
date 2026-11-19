@@ -31,7 +31,7 @@ async function request(endpoint, options = {}) {
     });
   } catch (networkError) {
     throw new Error(
-      `Cannot connect to backend server at ${API_BASE_URL}. Please ensure the backend server is running on port 8000.`
+      `Cannot connect to backend server at ${API_BASE_URL}. The server may be waking up (cold start) or temporarily unavailable. Please try again in a few seconds.`
     );
   }
 

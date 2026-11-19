@@ -1,33 +1,47 @@
+import os
 from pathlib import Path
 import uuid
+import numpy as np
 import chromadb
 
-# Global lazy-loaded embedding model to minimize RAM on server startup
-_model = None
+# Global lazy-loaded ONNX embedding function to minimize RAM (<40MB)
+_embedding_fn = None
 
 
 def get_embedding_model():
     """
-    Lazy-load SentenceTransformer only when first needed.
-    Keeps startup RSS memory low (<100MB) so cloud services
-    (like Render 512MB free tier) bind the port and pass health checks instantly.
+    Get lightweight embedding generator.
+    Prioritizes ONNXMiniLM_L6_V2 (native ONNX runtime, ~40MB RAM, no PyTorch).
+    Falls back gracefully to SentenceTransformer if running in an environment with PyTorch.
     """
-    global _model
-    if _model is None:
+    global _embedding_fn
+    if _embedding_fn is None:
         try:
-            import torch
-            torch.set_num_threads(1)
-        except Exception:
-            pass
-        from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
-    return _model
+            from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
+            _embedding_fn = ONNXMiniLM_L6_V2()
+            print("[VectorService] Using lightweight ONNXMiniLM_L6_V2 (ONNX Runtime)")
+        except Exception as e:
+            print(f"[VectorService] ONNX runtime failed ({e}), attempting SentenceTransformer fallback...")
+            try:
+                import torch
+                torch.set_num_threads(1)
+            except Exception:
+                pass
+            from sentence_transformers import SentenceTransformer
+            _embedding_fn = SentenceTransformer("all-MiniLM-L6-v2")
+    return _embedding_fn
 
 
 class _LazyModelProxy:
     """Proxy object so legacy model.encode(...) calls continue to work seamlessly."""
-    def encode(self, *args, **kwargs):
-        return get_embedding_model().encode(*args, **kwargs)
+    def encode(self, chunks, **kwargs):
+        fn = get_embedding_model()
+        if hasattr(fn, "encode"):
+            return fn.encode(chunks, **kwargs)
+        if isinstance(chunks, str):
+            chunks = [chunks]
+        raw_embs = fn(list(chunks))
+        return np.array(raw_embs, dtype=np.float32)
 
 
 model = _LazyModelProxy()
@@ -52,7 +66,8 @@ def create_embeddings(chunks, filename, user_id):
     delete_document(filename, user_id=user_id)
 
     # Create embeddings
-    embeddings = model.encode(chunks).tolist()
+    raw_encoded = model.encode(chunks)
+    embeddings = raw_encoded.tolist() if hasattr(raw_encoded, "tolist") else list(raw_encoded)
 
     # Generate unique IDs
     ids = [str(uuid.uuid4()) for _ in chunks]
@@ -77,7 +92,8 @@ def create_embeddings(chunks, filename, user_id):
 
 def search(query, user_id, k=5):
 
-    query_embedding = model.encode([query]).tolist()
+    raw_query = model.encode([query])
+    query_embedding = raw_query.tolist() if hasattr(raw_query, "tolist") else list(raw_query)
 
     results = collection.query(
         query_embeddings=query_embedding,
